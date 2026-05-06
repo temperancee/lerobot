@@ -341,16 +341,9 @@ def record(
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
-    # Fall back to identity pipelines when the caller doesn't supply processors.
-    if (
-        teleop_action_processor is None
-        or robot_action_processor is None
-        or robot_observation_processor is None
-    ):
-        _t, _r, _o = make_default_processors()
-        teleop_action_processor = teleop_action_processor or _t
-        robot_action_processor = robot_action_processor or _r
-        robot_observation_processor = robot_observation_processor or _o
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors(
+        cfg.teleop, cfg.robot
+    )
 
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
