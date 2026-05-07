@@ -214,13 +214,18 @@ class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
     def __init__(
-        self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1, device_name: str | None = None
+        self, x_step_size=0.5, y_step_size=100.0, z_step_size=4.0, rx_step_size=1.0, deadzone=0.1, device_name: str | None = None
     ):
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.joystick = None
         self.intervention_flag = False
         self.device_name = device_name
+
+        # Add these for controlling the joints directly in accordance with PR 3174
+        self.rx_step_size = rx_step_size
+        self.right_x = 0.0
+        self.wrist_roll_command = 0.0
 
     def start(self):
         """Initialize pygame and the gamepad."""
@@ -275,22 +280,31 @@ class GamepadController(InputController):
         """Process pygame events to get fresh gamepad readings."""
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
+                # Y button (3) for success
                 if event.button == 3:
                     self.episode_end_status = TeleopEvents.SUCCESS
-                # A button (1) for failure
-                elif event.button == 1:
-                    self.episode_end_status = TeleopEvents.FAILURE
-                # X button (0) for rerecord
+                # A button (0) for failure
                 elif event.button == 0:
+                    self.episode_end_status = TeleopEvents.FAILURE
+                # X button (2) for rerecord
+                elif event.button == 2:
                     self.episode_end_status = TeleopEvents.RERECORD_EPISODE
 
-                # RB button (6) for closing gripper
+                # Select (6) for closing gripper
                 elif event.button == 6:
                     self.close_gripper_command = True
 
-                # LT button (7) for opening gripper
+                # Start button (7) for opening gripper
                 elif event.button == 7:
                     self.open_gripper_command = True
+
+
+                # LB (5) for rolling wrist left
+                elif event.button == 4:
+                    self.wrist_roll_command = -1.0
+                # RB (5) for rolling wrist right
+                elif event.button == 5:
+                    self.wrist_roll_command = 1.0
 
             # Reset episode status on button release
             elif event.type == pygame.JOYBUTTONUP:
@@ -303,8 +317,11 @@ class GamepadController(InputController):
                 elif event.button == 7:
                     self.open_gripper_command = False
 
-            # Check for RB button (typically button 5) for intervention flag
-            if self.joystick.get_button(5):
+                elif event.button in [4, 5]:
+                    self.wrist_roll_command = 0.0
+
+            # Check for XBOX button (8) for intervention flag
+            if self.joystick.get_button(8):
                 self.intervention_flag = True
             else:
                 self.intervention_flag = False
@@ -317,18 +334,27 @@ class GamepadController(InputController):
             y_input = self.joystick.get_axis(0)  # Up/Down (often inverted)
             x_input = self.joystick.get_axis(1)  # Left/Right
 
-            # Right stick Y (typically axis 3 or 4)
-            z_input = self.joystick.get_axis(3)  # Up/Down for Z
+            # Right stick Y (axis 4)
+            z_input = self.joystick.get_axis(4)  # Up/Down for Z
+
+            # Right stick X (axis 3) - this is a new addition by me to allow for controlling the wrist 
+            rx_input = self.joystick.get_axis(3)
+
+            # TODO: Make triggers control the claw
+            # Triggers (for some reason these are axes)
+            # lt_input = self.joystick.get_axis()
 
             # Apply deadzone to avoid drift
             x_input = 0 if abs(x_input) < self.deadzone else x_input
             y_input = 0 if abs(y_input) < self.deadzone else y_input
             z_input = 0 if abs(z_input) < self.deadzone else z_input
+            rx_input = 0 if abs(rx_input) < self.deadzone else rx_input
 
             # Calculate deltas (note: may need to invert axes depending on controller)
-            delta_x = -x_input * self.x_step_size  # Forward/backward
-            delta_y = -y_input * self.y_step_size  # Left/right
-            delta_z = -z_input * self.z_step_size  # Up/down
+            delta_x = -x_input * self.x_step_size  # Shoulder yaw
+            delta_y = -y_input * self.y_step_size  # Shoulder pitch
+            delta_z = -z_input * self.z_step_size  # Elbow
+            self.right_x = -rx_input * self.rx_step_size  # Wrist pitch
 
             return delta_x, delta_y, delta_z
 
@@ -500,10 +526,12 @@ class GamepadControllerHID(InputController):
             #   byte[12:14]= s16 LE left stick Y  (-32768 to 32767)
             #   byte[14:16]= s16 LE right stick X (-32768 to 32767)
             #   byte[16:18]= s16 LE right stick Y (-32768 to 32767)
-            if len(data) == 18 and data[0] == 0x20:
-                self._update_xbox(data)
-            elif len(data) >= 8:
-                self._update_logitech(data)
+            # NOTE: I have commented this out and am just forcing the use of xbox instead
+            # if len(data) == 18 and data[0] == 0x20:
+            #     self._update_xbox(data)
+            # elif len(data) >= 8:
+            #     self._update_logitech(data)
+            self._update_xbox(data)
 
         except OSError as e:
             logging.error(f"Error reading from gamepad: {e}")
