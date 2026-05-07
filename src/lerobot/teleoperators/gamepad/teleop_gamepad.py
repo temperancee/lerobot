@@ -88,27 +88,35 @@ class GamepadTeleop(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+
+        # For my linter
+        assert self.gamepad is not None
         # Update the controller to get fresh inputs
         self.gamepad.update()
 
         # Get movement deltas from the controller
         delta_x, delta_y, delta_z = self.gamepad.get_deltas()
 
-        # Create action from gamepad input
-        gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
-
-        action_dict = {
-            "delta_x": gamepad_action[0],
-            "delta_y": gamepad_action[1],
-            "delta_z": gamepad_action[2],
-        }
-
         # Default gripper action is to stay
         gripper_action = GripperAction.STAY.value
         if self.config.use_gripper:
             gripper_command = self.gamepad.gripper_command()
             gripper_action = gripper_action_map[gripper_command]
-            action_dict["gripper"] = gripper_action
+
+        # NOTE: gripper_action, at this point, will be one of "open", "stay", or "close". We need to map this to a float value to give
+        #       to the IK solver, which will use it to send motor commands
+
+        # Create action from gamepad input
+        action_dict = {
+            "ee.x": delta_x,
+            "ee.y": delta_y,
+            "ee.z": delta_z,
+            "ee.wx": self.gamepad.wx_input,
+            "ee.wy": self.gamepad.wy_input,
+            "ee.wz": 0.0,
+            # "ee.gripper_pos": gripper_action
+            "ee.gripper_pos": 0.0
+        }
 
         return action_dict
 

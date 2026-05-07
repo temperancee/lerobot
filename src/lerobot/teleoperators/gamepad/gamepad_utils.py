@@ -17,6 +17,8 @@
 import logging
 from typing import TYPE_CHECKING
 
+from pygame import joystick
+
 from lerobot.utils.import_utils import _hidapi_available, _pygame_available, require_package
 
 from ..utils import TeleopEvents
@@ -211,12 +213,18 @@ class KeyboardController(InputController):
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
-    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
+    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, wx_step_size=1.0, wy_step_size=1.0, deadzone=0.1):
         require_package("pygame", extra="gamepad")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.joystick = None
         self.intervention_flag = False
+
+        # Added by me
+        self.wx_step_size = wx_step_size
+        self.wy_step_size = wy_step_size
+        self.wx_input = 0.0
+        self.wy_input = 0.0
 
     def start(self):
         """Initialize pygame and the gamepad."""
@@ -261,41 +269,58 @@ class GamepadController(InputController):
                 elif event.button == 0:
                     self.episode_end_status = TeleopEvents.RERECORD_EPISODE
 
-                # RB button (6) for closing gripper
-                elif event.button == 6:
-                    self.close_gripper_command = True
-
-                # LT button (7) for opening gripper
-                elif event.button == 7:
-                    self.open_gripper_command = True
+                # LB (4) for rolling wrist left
+                elif event.button == 4:
+                    self.wx_input = -1.0
+                # RB (5) for rolling wrist right
+                elif event.button == 5:
+                    self.wy_input = 1.0
 
             # Reset episode status on button release
             elif event.type == pygame.JOYBUTTONUP:
                 if event.button in [0, 2, 3]:
                     self.episode_end_status = None
 
-                elif event.button == 6:
-                    self.close_gripper_command = False
 
-                elif event.button == 7:
-                    self.open_gripper_command = False
-
-            # Check for RB button (typically button 5) for intervention flag
-            if self.joystick.get_button(5):
+            # Check for xbox button (8) for intervention flag
+            if self.joystick.get_button(8):
                 self.intervention_flag = True
             else:
                 self.intervention_flag = False
+
+
+            # RT and LT are axes rather than buttons (because you can vary the pressure)
+            # so we implement them here, outside of the if block above
+            # Values range from -32767 (when not pressed) to 32767, so we simply check
+            # whether the value is above -32700 (some leeway given cause why not, 
+            # value goes straight to like -26000 when the minimum detectable pressure
+            # is applied anyway)
+
+            # RT (5) for closing gripper
+            if self.joystick.get_axis(5) > -32700:
+                self.close_gripper_command = True
+            else:
+                self.close_gripper_command = False
+
+            # LT (2) for opening gripper
+            if self.joystick.get_axis(2) > -32700:
+                self.open_gripper_command = True
+            else:
+                self.open_gripper_command = False
+
+
 
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
         try:
             # Read joystick axes
-            # Left stick X and Y (typically axes 0 and 1)
+            # Left stick X and Y
             y_input = self.joystick.get_axis(0)  # Up/Down (often inverted)
             x_input = self.joystick.get_axis(1)  # Left/Right
 
-            # Right stick Y (typically axis 3 or 4)
-            z_input = self.joystick.get_axis(3)  # Up/Down for Z
+            # Right stick X and Y
+            z_input = self.joystick.get_axis(4)  # Up/Down for Z
+            wy_input = self.joystick.get_axis(3)  # Up/Down for Z
 
             # Apply deadzone to avoid drift
             x_input = 0 if abs(x_input) < self.deadzone else x_input
